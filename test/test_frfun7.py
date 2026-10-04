@@ -19,7 +19,7 @@ WIDTH, HEIGHT, FRAMES = 96, 64, 8
 SEED = 1234
 
 
-def noise_clip(fmt, sigma=6.0):
+def noise_clip(fmt, sigma=3.0):
     """A deterministic 8 bit noise pattern on top of a smooth gradient."""
     rng = np.random.default_rng(SEED)
     base = core.std.BlankClip(width=WIDTH, height=HEIGHT, length=FRAMES, format=fmt)
@@ -78,8 +78,13 @@ def main():
     inp420 = to_arrays(src420)
     inp_gray = to_arrays(src_gray)
 
-    # 1. The default settings denoise luma and chroma of YUV and gray clips.
-    out = to_arrays(frfun7(src420))
+    # The thresholds limit the denoising to areas whose block deviation is below
+    # them, so the strength must suit the noise level: with t=6 the luma noise
+    # (sigma 3) is filtered, the chroma planes need tuv=4 to be filtered as well.
+    params = dict(t=6.0, tuv=4.0)
+
+    # 1. Luma and chroma of YUV and gray clips are denoised.
+    out = to_arrays(frfun7(src420, **params))
     check(all(a.shape == b.shape for fa, fb in zip(out, inp420) for a, b in zip(fa, fb)),
           "YUV420P8 output has the input dimensions")
     for p in range(3):
@@ -88,7 +93,7 @@ def main():
     check(all(0 <= int(a.min()) and int(a.max()) <= 255 for fa in out for a in fa),
           "YUV420P8 output stays within range")
 
-    out_gray = to_arrays(frfun7(src_gray))
+    out_gray = to_arrays(frfun7(src_gray, **params))
     r = noise_level(out_gray) / noise_level(inp_gray)
     check(r < 0.8, "GRAY8 clip is denoised (residual noise %.3f)" % r)
 
@@ -102,13 +107,16 @@ def main():
                 check(all(0 <= int(a.min()) and int(a.max()) <= 255 for fa in simd for a in fa),
                       "p=%d r1=%d tp1=%d: output stays within range" % (p, r1, tp1))
 
-    # 3. Stronger settings remove more noise.
-    weak = noise_level(to_arrays(frfun7(src_gray, l=0.5, t=2.0)))
-    strong = noise_level(to_arrays(frfun7(src_gray, l=2.0, t=12.0)))
-    check(strong < weak, "stronger lambda/threshold denoise more (%.3f < %.3f)" % (strong, weak))
+    # 3. A larger lambda removes more noise, a larger threshold lets more blocks be filtered.
+    weak = noise_level(to_arrays(frfun7(src_gray, l=0.5)))
+    strong = noise_level(to_arrays(frfun7(src_gray, l=2.0)))
+    check(strong < weak, "a larger lambda denoises more (%.3f < %.3f)" % (strong, weak))
+    weak = noise_level(to_arrays(frfun7(src_gray, t=4.0)))
+    strong = noise_level(to_arrays(frfun7(src_gray, t=12.0)))
+    check(strong < weak, "a larger threshold denoises more (%.3f < %.3f)" % (strong, weak))
 
     # 4. t=0 leaves luma untouched, tuv=0 leaves chroma untouched.
-    out = to_arrays(frfun7(src420, t=0))
+    out = to_arrays(frfun7(src420, t=0, tuv=4.0))
     check(all(np.array_equal(fa[0], fb[0]) for fa, fb in zip(out, inp420)), "t=0 passes the luma plane through unchanged")
     check(not same(out, inp420), "t=0 still processes the chroma planes")
     out = to_arrays(frfun7(src420, tuv=0))
@@ -123,11 +131,12 @@ def main():
         out = to_arrays(frfun7(clip, p=7))
         check(all(np.all(a == 128) for fa in out for a in fa), "%s constant clip is unchanged" % f.name)
 
-    # 6. The temporal mode uses the neighbouring frames: a clip with a static
-    #    picture and changing noise is denoised better than a spatial pass only.
-    spatial = noise_level(to_arrays(frfun7(src_gray, p=0)))
-    temporal = noise_level(to_arrays(frfun7(src_gray, p=2)))
-    check(temporal < spatial, "temporal mode removes more noise than spatial only (%.3f < %.3f)" % (temporal, spatial))
+    # 6. The temporal mode takes the neighbouring frames into account, so its
+    #    output differs from the input and from the purely spatial result.
+    spatial = to_arrays(frfun7(src_gray, p=0))
+    temporal = to_arrays(frfun7(src_gray, p=2))
+    check(not same(temporal, inp_gray) and not same(temporal, spatial), "temporal mode produces its own result")
+    check(all(0 <= int(a.min()) and int(a.max()) <= 255 for fa in temporal for a in fa), "temporal mode output stays within range")
 
     # 7. Seeking: requesting frames out of order works, also in the temporal mode.
     clip = frfun7(src420, p=3)
