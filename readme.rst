@@ -15,6 +15,9 @@ Parameters:
     *clip*
         A clip to process. It must be 8 bit Gray or YUV.
 
+        Clips with a variable format are accepted, each frame is then
+        checked individually.
+
     *l*
         It should be called "lambda" but that word is reserved by Python.
 
@@ -67,14 +70,56 @@ Parameters:
 
         Default: 3.
 
+    *opt*
+        Selects the implementation.
+
+        0 - scalar C++ code
+
+        1 - SSE2 code (x86 only, falls back to the scalar code elsewhere)
+
+        Both produce identical output.
+
+        Default: 1.
+
+
+Installation
+============
+
+Prebuilt wheels for Windows x64, Linux x86_64 and macOS arm64 are
+attached to each `GitHub release
+<https://github.com/Selur/vapoursynth-frfun7/releases>`_::
+
+    pip install vapoursynth_frfun7-*.whl
+
+The plugin uses the VapourSynth API 4 (VapourSynth R55 or newer).
+
+
+Testing
+=======
+
+``test/test_frfun7.py`` runs the plugin on synthetic clips: it checks
+that the SIMD and the scalar code produce identical output in every
+mode, that the planes are denoised, that ``t=0``/``tuv=0`` leave the
+respective planes untouched and that unsupported formats and
+parameters are rejected. It needs the ``vapoursynth`` Python module
+and ``numpy``::
+
+    python3 test/test_frfun7.py build/libfrfun7.so
+
 
 Compilation
 ===========
 
+Meson and Ninja are required. The VapourSynth API 4 headers are
+bundled, a system installation of VapourSynth is optional.
+
 ::
 
-    meson build
+    meson setup build
     ninja -C build
+
+On macOS the plugin is built as ``libfrfun7.dylib``, which is the only
+extension VapourSynth autoloads there.
 
 
 License

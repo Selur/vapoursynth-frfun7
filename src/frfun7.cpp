@@ -7,8 +7,8 @@
 #include <emmintrin.h>
 #endif
 
-#include <VapourSynth.h>
-#include <VSHelper.h>
+#include <VapourSynth4.h>
+#include <VSHelper4.h>
 
 
 #ifdef _WIN32
@@ -1708,7 +1708,7 @@ AVS_FORCEINLINE int clipb(int weight) {
 
 
 typedef struct Frfun7Data {
-    VSNodeRef *clip;
+    VSNode *clip;
     const VSVideoInfo *vi;
 
     int process[3];
@@ -1720,17 +1720,6 @@ typedef struct Frfun7Data {
     int R_1stpass; // Radius of first pass, originally 3, can be 2 as well
     int opt;
 } Frfun7Data;
-
-
-static void VS_CC frfun7Init(VSMap *in, VSMap *out, void **instanceData, VSNode *node, VSCore *core, const VSAPI *vsapi) {
-    (void)in;
-    (void)out;
-    (void)core;
-
-    Frfun7Data *d = (Frfun7Data *) *instanceData;
-
-    vsapi->setVideoInfo(d->vi, 1, node);
-}
 
 
 enum SIMD_or_scalar {
@@ -1971,10 +1960,10 @@ static void process_plane(const uint8_t *srcp_orig, int src_pitch,
 }
 
 
-static const VSFrameRef *VS_CC frfun7GetFrame(int n, int activationReason, void **instanceData, void **frameData, VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi) {
+static const VSFrame *VS_CC frfun7GetFrame(int n, int activationReason, void *instanceData, void **frameData, VSFrameContext *frameCtx, VSCore *core, const VSAPI *vsapi) {
     (void)frameData;
 
-    const Frfun7Data *d = (const Frfun7Data *) *instanceData;
+    const Frfun7Data *d = (const Frfun7Data *)instanceData;
 
     const int P = d->P;
     const int Thresh_luma = d->Thresh_luma;
@@ -1997,38 +1986,39 @@ static const VSFrameRef *VS_CC frfun7GetFrame(int n, int activationReason, void 
         if (mode_temporal)
             vsapi->requestFrameFilter(std::min(n + 1, d->vi->numFrames - 1), d->clip, frameCtx);
     } else if (activationReason == arAllFramesReady) {
-        const VSFrameRef *cf = vsapi->getFrameFilter(n, d->clip, frameCtx);
+        const VSFrame *cf = vsapi->getFrameFilter(n, d->clip, frameCtx);
 
-        const VSFormat *fmt = vsapi->getFrameFormat(cf);
+        const VSVideoFormat *fmt = vsapi->getVideoFrameFormat(cf);
 
-        if (fmt->bitsPerSample > 8) {
+        // The format is checked here as well because the clip may have a variable format.
+        if (fmt->sampleType != stInteger || fmt->bitsPerSample != 8) {
             vsapi->setFilterError("Frfun7: only 8 bit video is allowed", frameCtx);
             vsapi->freeFrame(cf);
             return nullptr;
         }
 
-        if (fmt->colorFamily != cmGray && fmt->colorFamily != cmYUV) {
+        if (fmt->colorFamily != cfGray && fmt->colorFamily != cfYUV) {
             vsapi->setFilterError("Frfun7: only gray or YUV video is allowed", frameCtx);
             vsapi->freeFrame(cf);
             return nullptr;
         }
 
-        const VSFrameRef *pf = nullptr; // previous
-        const VSFrameRef *nf = nullptr; // next
+        const VSFrame *pf = nullptr; // previous
+        const VSFrame *nf = nullptr; // next
 
         if (mode_temporal) {
           pf = vsapi->getFrameFilter(std::max(0, n - 1), d->clip, frameCtx);
           nf = vsapi->getFrameFilter(std::min(n + 1, d->vi->numFrames - 1), d->clip, frameCtx);
         }
 
-        const VSFrameRef *frames[3] = {
+        const VSFrame *frames[3] = {
             d->process[0] ? nullptr : cf,
             d->process[1] ? nullptr : cf,
             d->process[2] ? nullptr : cf
         };
         int planes[3] = { 0, 1, 2 };
 
-        VSFrameRef *df = vsapi->newVideoFrame2(fmt,
+        VSFrame *df = vsapi->newVideoFrame2(fmt,
                                                vsapi->getFrameWidth(cf, 0),
                                                vsapi->getFrameHeight(cf, 0),
                                                frames, planes, cf, core);
@@ -2041,10 +2031,10 @@ static const VSFrameRef *VS_CC frfun7GetFrame(int n, int activationReason, void 
         int wp_stride = (((wp_width)+(ALIGN)-1) & (~((ALIGN)-1)));
 
         if (mode_adaptive_overlapping)
-            wpln = vs_aligned_malloc<uint8_t>(wp_stride * wp_height, ALIGN);
+            wpln = vsh::vsh_aligned_malloc<uint8_t>(wp_stride * wp_height, ALIGN);
 
 
-        const int num_of_planes = d->vi->format->numPlanes;
+        const int num_of_planes = fmt->numPlanes;
         for (int plane = 0; plane < num_of_planes; plane++) { // PLANES LOOP
 
           if (!d->process[plane])
@@ -2092,7 +2082,7 @@ static const VSFrameRef *VS_CC frfun7GetFrame(int n, int activationReason, void 
         vsapi->freeFrame(pf);
         vsapi->freeFrame(nf);
         if (wpln)
-            vs_aligned_free(wpln);
+            vsh::vsh_aligned_free(wpln);
 
         return df;
     }
@@ -2119,45 +2109,45 @@ static void VS_CC frfun7Create(const VSMap *in, VSMap *out, void *userData, VSCo
 
     int err;
 
-    double lambda = vsapi->propGetFloat(in, "l", 0, &err);
+    double lambda = vsapi->mapGetFloat(in, "l", 0, &err);
     if (err)
         lambda = 1.1;
 
     d.lambda = (int)(lambda * 1024); // 10 bit integer arithmetic
 
 
-    double t = vsapi->propGetFloat(in, "t", 0, &err);
+    double t = vsapi->mapGetFloat(in, "t", 0, &err);
     if (err)
         t = 6;
 
     d.Thresh_luma = (int)(t * 16); // internal subsampling is 4x4, probably x16 covers that
 
 
-    double tuv = vsapi->propGetFloat(in, "tuv", 0, &err);
+    double tuv = vsapi->mapGetFloat(in, "tuv", 0, &err);
     if (err)
         tuv = 2;
 
     d.Thresh_chroma = (int)(tuv * 16);
 
 
-    d.P = int64ToIntS(vsapi->propGetInt(in, "p", 0, &err));
+    d.P = vsh::int64ToIntS(vsapi->mapGetInt(in, "p", 0, &err));
     if (err)
         d.P = 0;
 
     d.P &= 7;
 
 
-    d.P1_param = int64ToIntS(vsapi->propGetInt(in, "tp1", 0, &err));
+    d.P1_param = vsh::int64ToIntS(vsapi->mapGetInt(in, "tp1", 0, &err));
     if (err)
         d.P1_param = 0;
 
 
-    d.R_1stpass = int64ToIntS(vsapi->propGetInt(in, "r1", 0, &err));
+    d.R_1stpass = vsh::int64ToIntS(vsapi->mapGetInt(in, "r1", 0, &err));
     if (err)
         d.R_1stpass = 3;
 
 
-    d.opt = !!vsapi->propGetInt(in, "opt", 0, &err);
+    d.opt = !!vsapi->mapGetInt(in, "opt", 0, &err);
     if (err)
         d.opt = 1;
 
@@ -2168,23 +2158,38 @@ static void VS_CC frfun7Create(const VSMap *in, VSMap *out, void *userData, VSCo
 
 
     if (d.lambda < 0) {
-        vsapi->setError(out, "Frfun7: lambda cannot be negative");
+        vsapi->mapSetError(out, "Frfun7: lambda cannot be negative");
         return;
     }
 
     if (d.Thresh_luma < 0 || d.Thresh_chroma < 0) {
-        vsapi->setError(out, "Frfun7: threshold cannot be negative");
+        vsapi->mapSetError(out, "Frfun7: threshold cannot be negative");
         return;
     }
 
     if (d.R_1stpass != 2 && d.R_1stpass != 3) {
-        vsapi->setError(out, "Frfun7: r1 (1st pass radius) must be 2 or 3");
+        vsapi->mapSetError(out, "Frfun7: r1 (1st pass radius) must be 2 or 3");
         return;
     }
 
 
-    d.clip = vsapi->propGetNode(in, "clip", 0, nullptr);
+    d.clip = vsapi->mapGetNode(in, "clip", 0, nullptr);
     d.vi = vsapi->getVideoInfo(d.clip);
+
+    // A variable format (cfUndefined) is checked frame by frame in frfun7GetFrame.
+    if (d.vi->format.colorFamily != cfUndefined) {
+        if (d.vi->format.sampleType != stInteger || d.vi->format.bitsPerSample != 8) {
+            vsapi->mapSetError(out, "Frfun7: only 8 bit video is allowed");
+            vsapi->freeNode(d.clip);
+            return;
+        }
+
+        if (d.vi->format.colorFamily != cfGray && d.vi->format.colorFamily != cfYUV) {
+            vsapi->mapSetError(out, "Frfun7: only gray or YUV video is allowed");
+            vsapi->freeNode(d.clip);
+            return;
+        }
+    }
 
 
     // pre-build reciprocial table
@@ -2198,20 +2203,23 @@ static void VS_CC frfun7Create(const VSMap *in, VSMap *out, void *userData, VSCo
     Frfun7Data *data = (Frfun7Data *)malloc(sizeof(d));
     *data = d;
 
-    vsapi->createFilter(in, out, "Frfun7", frfun7Init, frfun7GetFrame, frfun7Free, fmParallel, 0, data, core);
+    // The temporal mode (p & 2) also reads the previous and the next frame.
+    VSFilterDependency deps[] = { { data->clip, (data->P & 2) ? rpGeneral : rpStrictSpatial } };
+    vsapi->createVideoFilter(out, "Frfun7", data->vi, frfun7GetFrame, frfun7Free, fmParallel, deps, 1, data, core);
 }
 
 
-VS_EXTERNAL_API(void) VapourSynthPluginInit(VSConfigPlugin configFunc, VSRegisterFunction registerFunc, VSPlugin *plugin) {
-    configFunc("com.nodame.frfun7", "frfun7", "A spatial denoising filter", (3 << 16) | 5, 1, plugin);
-    registerFunc("Frfun7",
-                 "clip:clip;"
-                 "l:float:opt;"
-                 "t:float:opt;"
-                 "tuv:float:opt;"
-                 "p:int:opt;"
-                 "tp1:int:opt;"
-                 "r1:int:opt;"
-                 "opt:int:opt;"
-                 , frfun7Create, nullptr, plugin);
+VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin *plugin, const VSPLUGINAPI *vspapi) {
+    vspapi->configPlugin("com.nodame.frfun7", "frfun7", "A spatial denoising filter", VS_MAKE_VERSION(1, 0), VAPOURSYNTH_API_VERSION, 0, plugin);
+    vspapi->registerFunction("Frfun7",
+                             "clip:vnode;"
+                             "l:float:opt;"
+                             "t:float:opt;"
+                             "tuv:float:opt;"
+                             "p:int:opt;"
+                             "tp1:int:opt;"
+                             "r1:int:opt;"
+                             "opt:int:opt;",
+                             "clip:vnode;",
+                             frfun7Create, nullptr, plugin);
 }
