@@ -2210,7 +2210,7 @@ static void VS_CC frfun7Create(const VSMap *in, VSMap *out, void *userData, VSCo
 
 
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin *plugin, const VSPLUGINAPI *vspapi) {
-    vspapi->configPlugin("com.nodame.frfun7", "frfun7", "A spatial denoising filter", VS_MAKE_VERSION(1, 0), VAPOURSYNTH_API_VERSION, 0, plugin);
+    vspapi->configPlugin("com.nodame.frfun7", "frfun7", "A spatial denoising filter", VS_MAKE_VERSION(1, 1), VAPOURSYNTH_API_VERSION, 0, plugin);
     vspapi->registerFunction("Frfun7",
                              "clip:vnode;"
                              "l:float:opt;"

@@ -1,7 +1,7 @@
 project('frfun7', 'cpp',
   default_options : ['buildtype=release', 'b_ndebug=if-release', 'cpp_std=c++17'],
   meson_version : '>=0.51.0',
-  version : '1'
+  version : '1.1'
 )
 
 sources = ['src/frfun7.cpp']
