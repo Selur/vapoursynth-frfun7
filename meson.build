@@ -1,6 +1,6 @@
 project('frfun7', 'cpp',
   default_options : ['buildtype=release', 'b_ndebug=if-release', 'cpp_std=c++17'],
-  meson_version : '>=0.51.0',
+  meson_version : '>=0.64.0',
   version : '1.1'
 )
 
@@ -34,7 +34,10 @@ if host_cpu_family.startswith('x86')
 endif
 
 # VapourSynth only autoloads *.dylib on macOS, while Meson defaults to *.so for modules.
-suffix = host_system == 'darwin' ? 'dylib' : []
+module_kwargs = {}
+if host_system == 'darwin'
+  module_kwargs += {'name_suffix' : 'dylib'}
+endif
 
 if get_option('python_package')
   # Same layout as the VapourSynth PyPI package autoloads from: site-packages/vapoursynth/plugins
@@ -54,6 +57,6 @@ shared_module('frfun7', sources,
   link_args : ldflags,
   install : true,
   install_dir : install_dir,
-  name_suffix : suffix,
-  gnu_symbol_visibility : 'hidden'
+  gnu_symbol_visibility : 'hidden',
+  kwargs : module_kwargs
 )
